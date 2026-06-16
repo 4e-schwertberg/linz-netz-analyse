@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+
+<!-- Bei den Tageswerte-CSVs wird offenbar die letzte Zeile nicht berücksichtigt. Es wird zu wenig angezeigt. -->
+
+<html lang="de">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Linz Netz Analyse</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --eeg:#5da831;
+  --netz:#1eaabd;
+  --bg:#f0f2f5;
+  --card:#ffffff;
+  --border:#e0e4ea;
+  --text:#1a1d23;
+  --muted:#6b7280;
+}
+body{font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+header{padding:16px 24px;background:var(--card);border-bottom:1px solid var(--border);font-size:20px;font-weight:700;letter-spacing:-0.3px}
+.container{padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+
+.drop-zone{
+  border:2px dashed var(--border);border-radius:12px;background:var(--card);
+  padding:32px 20px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
+}
+.drop-zone.over{border-color:var(--netz);background:#f0fbfc}
+.drop-zone input[type=file]{display:none}
+.drop-zone-label{color:var(--muted);font-size:14px;margin-top:8px}
+.drop-btn{
+  display:inline-block;padding:8px 18px;border-radius:8px;background:var(--netz);color:#fff;
+  font-size:14px;font-weight:600;cursor:pointer;border:none;margin-bottom:8px;
+}
+.drop-btn:hover{opacity:.88}
+.file-info{font-size:13px;color:var(--muted);margin-top:6px;min-height:18px}
+
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+.toolbar.hidden{display:none}
+.toolbar label{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.toolbar input[type=date],.toolbar select{
+  padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#fff;color:var(--text);
+}
+.info-badge{margin-left:auto;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:3px 10px;color:var(--muted);white-space:nowrap}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.kpi .label{font-size:12px;color:var(--muted);margin-bottom:4px}
+.kpi .value{font-size:22px;font-weight:700;color:var(--text)}
+
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.chart-legend{display:flex;gap:18px;margin-bottom:10px;font-size:13px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.chart-wrap{position:relative;height:280px}
+
+.table-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.table-scroll{max-height:400px;overflow-y:auto}
+table{width:100%;border-collapse:collapse}
+thead th{position:sticky;top:0;background:#fafbfc;border-bottom:1px solid var(--border);padding:8px 10px;font-size:12px;text-align:left;font-weight:600;color:var(--muted);white-space:nowrap}
+tbody td{padding:7px 10px;border-bottom:1px solid #f0f2f5;font-size:13px}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:#f8f9fb}
+
+.badge{display:inline-block;font-size:11px;font-weight:600;border-radius:10px;padding:1px 7px;line-height:18px}
+.badge-M{background:#d1fae5;color:#065f46}
+.badge-EB{background:#fef3c7;color:#92400e}
+.badge-NV{background:#fee2e2;color:#991b1b}
+.badge-EN{background:#fce7f3;color:#9d174d}
+.badge-other{background:#f3f4f6;color:var(--muted)}
+.eeg-val{color:var(--eeg);font-weight:500}
+.netz-val{color:var(--netz);font-weight:500}
+
+.no-data{padding:20px;text-align:center;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+
+<header>Linz Netz Analyse</header>
+
+<div class="container">
+
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput" multiple accept=".csv"/>
+    <button class="drop-btn" onclick="document.getElementById('fileInput').click()">CSV-Dateien auswählen</button>
+    <div class="drop-zone-label">oder Dateien hierher ziehen</div>
+    <div class="file-info" id="fileInfo"></div>
+  </div>
+
+  <div class="toolbar hidden" id="toolbar">
+    <label>Von <input type="date" id="fromDate"/></label>
+    <label>Bis <input type="date" id="toDate"/></label>
+    <label>Aggregation
+      <select id="modeSelect">
+        <option value="auto">Auto</option>
+        <option value="raw">Original</option>
+        <option value="hour">Stunde</option>
+        <option value="day">Tag</option>
+      </select>
+    </label>
+    <span class="info-badge" id="infoBadge">–</span>
+  </div>
+
+  <div class="kpis" id="kpisSection" style="display:none">
+    <div class="kpi"><div class="label">Gesamtverbrauch</div><div class="value" id="kpiTotal">–</div></div>
+    <div class="kpi"><div class="label">EEG-Anteil</div><div class="value" id="kpiEEG">–</div></div>
+    <div class="kpi"><div class="label">Netzbezug</div><div class="value" id="kpiGrid">–</div></div>
+    <div class="kpi"><div class="label">EEG %</div><div class="value" id="kpiShare">–</div></div>
+    <div class="kpi"><div class="label">Ø pro Tag</div><div class="value" id="kpiAvg">–</div></div>
+  </div>
+
+  <div class="chart-card" id="chartSection" style="display:none">
+    <div class="chart-legend">
+      <span><span class="dot" style="background:var(--eeg)"></span>EEG</span>
+      <span><span class="dot" style="background:var(--netz)"></span>Netzbezug</span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+    </div>
+  </div>
+
+  <div class="table-card" id="tableSection" style="display:none">
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Zeit</th>
+            <th>Gesamt</th>
+            <th>EEG</th>
+            <th>Netzbezug</th>
+            <th>Status EEG</th>
+            <th>Qualität</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let chartInstance = null;
+let allRows = [];
+let dataUnit = 'kWh';
+
+const snapPlugin = {
+  id: 'snap',
+  beforeDraw(chart) {
+    const show = chart.options.plugins.snap && chart.options.plugins.snap.show;
+    if (!show) return;
+    const { ctx, chartArea, scales } = chart;
+    if (!chartArea || !scales.x) return;
+
+    const xScale = scales.x;
+    const minTs = xScale.min;
+    const maxTs = xScale.max;
+    if (minTs == null || maxTs == null) return;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,193,7,0.10)';
+
+    const startDay = new Date(minTs);
+    startDay.setHours(0, 0, 0, 0);
+    const endDay = new Date(maxTs);
+
+    for (let d = new Date(startDay); d <= endDay; d.setDate(d.getDate() + 1)) {
+      const month = d.getMonth() + 1;
+      if (month < 4 || month > 9) continue;
+
+      const snapStart = new Date(d);
+      snapStart.setHours(10, 0, 0, 0);
+      const snapEnd = new Date(d);
+      snapEnd.setHours(16, 0, 0, 0);
+
+      const x1 = xScale.getPixelForValue(snapStart.getTime());
+      const x2 = xScale.getPixelForValue(snapEnd.getTime());
+
+      const left = Math.max(x1, chartArea.left);
+      const right = Math.min(x2, chartArea.right);
+      if (right <= left) continue;
+
+      ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+    }
+
+    ctx.restore();
+  }
+};
+
+Chart.register(snapPlugin);
+
+function toNumber(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  return parseFloat(String(val).replace(',', '.').trim()) || 0;
+}
+
+function parseLinzDate(str) {
+  if (!str) return null;
+  str = String(str).trim().replace(/\r/g, '');
+  if (str.includes(' ')) {
+    const [datePart, timePart] = str.split(' ');
+    const parts = datePart.split('.');
+    if (parts.length < 3) return null;
+    const [day, month, year] = parts;
+    const fullYear = year; // '20' + year ??
+    const d = new Date(`${fullYear}-${month.padStart(2,'0')}-${day.padStart(2,'0')}T${timePart}:00`);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const parts = str.split('.');
+  if (parts.length < 3) return null;
+  const [day, month, year] = parts;
+  const fullYear = year; // '20' + year ??
+  const d = new Date(`${fullYear}-${month.padStart(2,'0')}-${day.padStart(2,'0')}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function detectFormat(headers) {
+  if (headers.includes('Leistung in kW')) return 'power15';
+  if (headers.includes('Datum von')) return 'energy15';
+  return 'energy60';
+}
+
+function parseCSVText(text) {
+  const result = Papa.parse(text, {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: false,
+    delimiter: ';',
+  });
+  if (!result.data || result.data.length === 0) return [];
+  const headers = result.meta.fields || [];
+  const fmt = detectFormat(headers);
+  const rows = [];
+  for (const row of result.data) {
+    let time = null;
+    let total = 0;
+    let grid = 0;
+    let ersatzwert = '';
+    let statusEEG = '';
+    let isPower = false;
+
+    if (fmt === 'energy60') {
+      time = parseLinzDate(row['Datum']);
+      total = toNumber(row['Energiemenge in kWh']);
+      grid = toNumber(row['Restnetzbezug in kWh (Energiegemeinschaft)']);
+      ersatzwert = (row['Ersatzwert'] || '').trim();
+      statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
+    } else if (fmt === 'energy15') {
+      time = parseLinzDate(row['Datum von']);
+      total = toNumber(row['Energiemenge in kWh']);
+      grid = toNumber(row['Restnetzbezug in kWh (Energiegemeinschaft)']);
+      ersatzwert = (row['Ersatzwert'] || '').trim();
+      statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
+    } else {
+      time = parseLinzDate(row['Datum von']);
+      total = toNumber(row['Leistung in kW']);
+      grid = toNumber(row['Restnetzbezug in kW (Energiegemeinschaft)']);
+      ersatzwert = (row['Ersatzwert'] || '').trim();
+      statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
+      isPower = true;
+    }
+
+    if (!time) continue;
+    const eeg = Math.max(total - grid, 0);
+    rows.push({ time, total, grid, eeg, ersatzwert, statusEEG, isPower });
+  }
+  return rows;
+}
+
+function resolveMode(rows, modeSelect) {
+  if (modeSelect === 'auto') {
+    if (rows.length <= 1000) return 'raw';
+    if (rows.length <= 5000) return 'hour';
+    return 'day';
+  }
+  return modeSelect;
+}
+
+function aggregate(rows, mode) {
+  if (mode === 'raw') return rows;
+
+  const isPower = rows.length > 0 && rows[0].isPower;
+  const map = new Map();
+
+  for (const r of rows) {
+    const d = r.time;
+    let key;
+    if (mode === 'hour') {
+      key = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()).getTime();
+    } else {
+      key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    }
+    if (!map.has(key)) {
+      map.set(key, { time: new Date(key), total: 0, grid: 0, eeg: 0, count: 0, isPower, ersatzwert: '', statusEEG: '' });
+    }
+    const entry = map.get(key);
+    entry.total += r.total;
+    entry.grid += r.grid;
+    entry.eeg += r.eeg;
+    entry.count += 1;
+  }
+
+  const result = [];
+  for (const entry of map.values()) {
+    if (isPower && entry.count > 0) {
+      entry.total /= entry.count;
+      entry.grid /= entry.count;
+      entry.eeg /= entry.count;
+    }
+    result.push(entry);
+  }
+  result.sort((a, b) => a.time - b.time);
+  return result;
+}
+
+function filterRows(rows) {
+  const fromVal = document.getElementById('fromDate').value;
+  const toVal = document.getElementById('toDate').value;
+  const fromTime = fromVal ? new Date(fromVal + 'T00:00:00') : null;
+  const toTime = toVal ? new Date(toVal + 'T23:59:59') : null;
+  return rows.filter(r => {
+    if (fromTime && r.time < fromTime) return false;
+    if (toTime && r.time > toTime) return false;
+    return true;
+  });
+}
+
+function setDateRange(rows) {
+  if (rows.length === 0) return;
+  const times = rows.map(r => r.time);
+  const min = new Date(Math.min(...times));
+  const max = new Date(Math.max(...times));
+  const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById('fromDate').value = fmt(min);
+  document.getElementById('toDate').value = fmt(max);
+}
+
+function fmtNum(n, decimals) {
+  return n.toLocaleString('de-AT', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function renderKPIs(rows, unit) {
+  const isPower = rows.length > 0 && rows[0].isPower;
+  let total, eeg, grid;
+
+  if (isPower) {
+    total = rows.length > 0 ? rows.reduce((s, r) => s + r.total, 0) / rows.length : 0;
+    eeg = rows.length > 0 ? rows.reduce((s, r) => s + r.eeg, 0) / rows.length : 0;
+    grid = rows.length > 0 ? rows.reduce((s, r) => s + r.grid, 0) / rows.length : 0;
+  } else {
+    total = rows.reduce((s, r) => s + r.total, 0);
+    eeg = rows.reduce((s, r) => s + r.eeg, 0);
+    grid = rows.reduce((s, r) => s + r.grid, 0);
+  }
+
+  const share = total > 0 ? (eeg / total) * 100 : 0;
+  const days = new Set(rows.map(r => r.time.toDateString())).size;
+  const avg = isPower
+    ? (rows.length > 0 ? rows.reduce((s, r) => s + r.total, 0) / rows.length : 0)
+    : (days > 0 ? total / days : 0);
+
+  document.getElementById('kpiTotal').textContent = fmtNum(total, 2) + ' ' + unit;
+  document.getElementById('kpiEEG').textContent = fmtNum(eeg, 2) + ' ' + unit;
+  document.getElementById('kpiGrid').textContent = fmtNum(grid, 2) + ' ' + unit;
+  document.getElementById('kpiShare').textContent = fmtNum(share, 1) + ' %';
+  document.getElementById('kpiAvg').textContent = fmtNum(avg, 2) + ' ' + unit;
+}
+
+function renderChart(rows, mode) {
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
+  }
+
+  const labels = rows.map(r => r.time);
+  const eegData = rows.map(r => r.eeg);
+  const gridData = rows.map(r => r.grid);
+  const showSnap = mode !== 'day';
+
+  chartInstance = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'EEG',
+          data: eegData,
+          backgroundColor: '#5da831cc',
+          borderColor: '#5da831',
+          borderWidth: 1.5,
+          fill: true,
+          tension: 0.15,
+          pointRadius: 0,
+          order: 2,
+        },
+        {
+          label: 'Netzbezug',
+          data: gridData,
+          backgroundColor: '#1eaabdcc',
+          borderColor: '#1eaabd',
+          borderWidth: 1.5,
+          fill: true,
+          tension: 0.15,
+          pointRadius: 0,
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        snap: { show: showSnap },
+      },
+      scales: {
+        x: {
+          type: 'time',
+          time: { tooltipFormat: 'dd.MM.yyyy HH:mm' },
+          ticks: { maxTicksLimit: 10, color: '#6b7280', font: { size: 11 } },
+          grid: { color: '#f0f2f5' },
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          ticks: { color: '#6b7280', font: { size: 11 } },
+          grid: { color: '#f0f2f5' },
+        },
+      },
+    },
+  });
+}
+
+function badgeHtml(code) {
+  const cls = ['M','EB','NV','EN'].includes(code) ? `badge-${code}` : 'badge-other';
+  return `<span class="badge ${cls}">${code || '–'}</span>`;
+}
+
+function renderTable(rows) {
+  const tbody = document.getElementById('tableBody');
+  const visible = rows.slice(0, 1000);
+  if (visible.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="no-data">Keine Daten</td></tr>';
+    return;
+  }
+  const parts = [];
+  for (const r of visible) {
+    const timeStr = r.time.toLocaleString('de-AT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    parts.push(
+      `<tr>` +
+      `<td>${timeStr}</td>` +
+      `<td>${fmtNum(r.total, 3)}</td>` +
+      `<td class="eeg-val">${fmtNum(r.eeg, 3)}</td>` +
+      `<td class="netz-val">${fmtNum(r.grid, 3)}</td>` +
+      `<td>${badgeHtml(r.statusEEG)}</td>` +
+      `<td>${badgeHtml(r.ersatzwert)}</td>` +
+      `</tr>`
+    );
+  }
+  tbody.innerHTML = parts.join('');
+}
+
+function renderAll() {
+  if (allRows.length === 0) return;
+
+  const filtered = filterRows(allRows);
+  const modeSelectVal = document.getElementById('modeSelect').value;
+  const resolvedMode = resolveMode(filtered, modeSelectVal);
+  const aggregated = aggregate(filtered, resolvedMode);
+  const isPower = allRows.length > 0 && allRows[0].isPower;
+  const unit = isPower ? 'kW' : 'kWh';
+
+  document.getElementById('toolbar').classList.remove('hidden');
+  document.getElementById('kpisSection').style.display = '';
+  document.getElementById('chartSection').style.display = '';
+  document.getElementById('tableSection').style.display = '';
+
+  document.getElementById('infoBadge').textContent = `${aggregated.length} Punkte · ${resolvedMode}`;
+
+  renderKPIs(aggregated, unit);
+  renderChart(aggregated, resolvedMode);
+  renderTable(aggregated);
+}
+
+async function loadFiles(files) {
+  allRows = [];
+  for (const file of files) {
+    const text = await file.text();
+    const rows = parseCSVText(text);
+    allRows.push(...rows);
+  }
+  allRows.sort((a, b) => a.time - b.time);
+
+  const n = files.length;
+  document.getElementById('fileInfo').textContent = `${n} Datei${n !== 1 ? 'en' : ''} geladen · ${allRows.length} Zeilen`;
+
+  setDateRange(allRows);
+  renderAll();
+}
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  if (e.target.files.length > 0) loadFiles([...e.target.files]);
+});
+
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('over');
+  const files = [...e.dataTransfer.files].filter(f => f.name.endsWith('.csv'));
+  if (files.length > 0) loadFiles(files);
+});
+
+document.getElementById('fromDate').addEventListener('change', renderAll);
+document.getElementById('toDate').addEventListener('change', renderAll);
+document.getElementById('modeSelect').addEventListener('change', renderAll);
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+linz-netz-analyse.html
+*.pyc
+.venv/
+*.zip
