@@ -1,7 +1,4 @@
 <!DOCTYPE html>
-
-<!-- Bei den Tageswerte-CSVs wird offenbar die letzte Zeile nicht berücksichtigt. Es wird zu wenig angezeigt. -->
-
 <html lang="de">
 <head>
 <meta charset="UTF-8"/>
@@ -85,7 +82,7 @@ tbody tr:hover{background:#f8f9fb}
 
   <div class="drop-zone" id="dropZone">
     <input type="file" id="fileInput" multiple accept=".csv"/>
-    <button class="drop-btn" onclick="document.getElementById('fileInput').click()">CSV-Dateien auswählen</button>
+    <label class="drop-btn" for="fileInput">CSV-Dateien auswählen</label>
     <div class="drop-zone-label">oder Dateien hierher ziehen</div>
     <div class="file-info" id="fileInfo"></div>
   </div>
