@@ -1,0 +1,60 @@
+name: Release build
+
+# Runs only when a GitHub Release is published in the UI (or via `gh release create`).
+# Plain tag pushes without a published release do nothing.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Compute version info
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          HASH="${GITHUB_SHA:0:7}"
+          URL="${{ github.event.release.html_url }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp version badge into linz-netz-analyse_cdn.html
+        run: |
+          FILE="linz-netz-analyse_cdn.html"
+          TAG="${{ steps.version.outputs.tag }}"
+          HASH="${{ steps.version.outputs.hash }}"
+          URL="${{ steps.version.outputs.url }}"
+          URL_ESCAPED=$(printf '%s' "$URL" | sed -e 's/[&|\\]/\\&/g')
+
+          sed -i -E "s|(<!-- VERSION_START -->).*(<!-- VERSION_END -->)|\1${TAG}-${HASH}\2|" "$FILE"
+          sed -i -E "s|(id=\"versionBadge\" href=\")[^\"]*(\")|\1${URL_ESCAPED}\2|" "$FILE"
+
+      - name: Commit and push badge update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- linz-netz-analyse_cdn.html; then
+            git add linz-netz-analyse_cdn.html
+            git commit -m "chore: stamp ${{ steps.version.outputs.tag }} into version badge [skip ci]"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+
+      - name: Generate standalone build
+        run: python3 make-standalone.py linz-netz-analyse_cdn.html linz-netz-analyse.html
+
+      - name: Upload standalone build to the release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ steps.version.outputs.tag }}" linz-netz-analyse.html --clobber
