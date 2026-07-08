@@ -19,7 +19,9 @@
   --muted:#6b7280;
 }
 body{font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-header{padding:16px 24px;background:var(--card);border-bottom:1px solid var(--border);font-size:20px;font-weight:700;letter-spacing:-0.3px}
+header{padding:16px 24px;background:var(--card);border-bottom:1px solid var(--border);font-size:20px;font-weight:700;letter-spacing:-0.3px;display:flex;align-items:center;gap:12px}
+.version-badge{font-size:12px;font-weight:500;letter-spacing:0;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:3px 10px;white-space:nowrap;text-decoration:none;transition:background .15s}
+.version-badge:hover{background:#e4e7ec}
 .container{padding:20px 24px;display:flex;flex-direction:column;gap:16px}
 
 .drop-zone{
@@ -76,7 +78,10 @@ tbody tr:hover{background:#f8f9fb}
 </head>
 <body>
 
-<header>Linz Netz Analyse</header>
+<header>
+  <span>Linz Netz Analyse</span>
+  <a class="version-badge" id="versionBadge" href="https://github.com/4e-schwertberg/linz-netz-analyse" target="_blank" rel="noopener"><!-- VERSION_START -->dev build<!-- VERSION_END --></a>
+</header>
 
 <div class="container">
 
