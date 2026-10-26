@@ -80,7 +80,7 @@ tbody tr:hover{background:#f8f9fb}
 
 <header>
   <span>Linz Netz Analyse</span>
-  <a class="version-badge" id="versionBadge" href="https://github.com/4e-schwertberg/linz-netz-analyse/releases/tag/v1" target="_blank" rel="noopener"><!-- VERSION_START -->v1-38bb76a<!-- VERSION_END --></a>
+  <a class="version-badge" id="versionBadge" href="https://github.com/4e-schwertberg/linz-netz-analyse/releases/tag/v1.x" target="_blank" rel="noopener"><!-- VERSION_START -->v1.x<!-- VERSION_END --></a>
 </header>
 
 <div class="container">
@@ -199,6 +199,11 @@ function toNumber(val) {
   return parseFloat(String(val).replace(',', '.').trim()) || 0;
 }
 
+function parseGridUsage(val, total) {
+  if (val === null || val === undefined || String(val).trim() === '') return total;
+  return toNumber(val);
+}
+  
 function parseLinzDate(str) {
   if (!str) return null;
   str = String(str).trim().replace(/\r/g, '');
@@ -247,19 +252,19 @@ function parseCSVText(text) {
     if (fmt === 'energy60') {
       time = parseLinzDate(row['Datum']);
       total = toNumber(row['Energiemenge in kWh']);
-      grid = toNumber(row['Restnetzbezug in kWh (Energiegemeinschaft)']);
+      grid = parseGridUsage(row['Restnetzbezug in kWh (Energiegemeinschaft)'], total);
       ersatzwert = (row['Ersatzwert'] || '').trim();
       statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
     } else if (fmt === 'energy15') {
       time = parseLinzDate(row['Datum von']);
       total = toNumber(row['Energiemenge in kWh']);
-      grid = toNumber(row['Restnetzbezug in kWh (Energiegemeinschaft)']);
+      grid = parseGridUsage(row['Restnetzbezug in kWh (Energiegemeinschaft)'], total);
       ersatzwert = (row['Ersatzwert'] || '').trim();
       statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
     } else {
       time = parseLinzDate(row['Datum von']);
       total = toNumber(row['Leistung in kW']);
-      grid = toNumber(row['Restnetzbezug in kW (Energiegemeinschaft)']);
+      grid = parseGridUsage(row['Restnetzbezug in kW (Energiegemeinschaft)'], total);
       ersatzwert = (row['Ersatzwert'] || '').trim();
       statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
       isPower = true;
@@ -335,7 +340,12 @@ function setDateRange(rows) {
   const times = rows.map(r => r.time);
   const min = new Date(Math.min(...times));
   const max = new Date(Math.max(...times));
-  const fmt = d => d.toISOString().slice(0, 10);
+  const fmt = d => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   document.getElementById('fromDate').value = fmt(min);
   document.getElementById('toDate').value = fmt(max);
 }
