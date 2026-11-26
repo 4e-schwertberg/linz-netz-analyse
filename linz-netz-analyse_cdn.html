@@ -50,6 +50,7 @@ header{padding:16px 24px;background:var(--card);border-bottom:1px solid var(--bo
 .kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
 .kpi .label{font-size:12px;color:var(--muted);margin-bottom:4px}
 .kpi .value{font-size:22px;font-weight:700;color:var(--text)}
+.kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
 
 .chart-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
 .chart-legend{display:flex;gap:18px;margin-bottom:10px;font-size:13px}
@@ -57,7 +58,10 @@ header{padding:16px 24px;background:var(--card);border-bottom:1px solid var(--bo
 .chart-wrap{position:relative;height:280px}
 
 .table-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
-.table-scroll{max-height:400px;overflow-y:auto}
+.table-scroll{max-height:400px;overflow:auto}
+.card-title{padding:12px 10px 8px;font-size:14px;font-weight:600}
+.table-note{padding:0 10px;font-size:12px;color:var(--muted)}
+.table-note:not(:empty){padding:8px 10px}
 table{width:100%;border-collapse:collapse}
 thead th{position:sticky;top:0;background:#fafbfc;border-bottom:1px solid var(--border);padding:8px 10px;font-size:12px;text-align:left;font-weight:600;color:var(--muted);white-space:nowrap}
 tbody td{padding:7px 10px;border-bottom:1px solid #f0f2f5;font-size:13px}
@@ -89,6 +93,7 @@ tbody tr:hover{background:#f8f9fb}
     <input type="file" id="fileInput" multiple accept=".csv"/>
     <label class="drop-btn" for="fileInput">CSV-Dateien auswählen</label>
     <div class="drop-zone-label">oder Dateien hierher ziehen</div>
+    <div class="drop-zone-label">Tipp: Für Monatsspitzen Viertelstundenwerte über ganze Monate exportieren.</div>
     <div class="file-info" id="fileInfo"></div>
   </div>
 
@@ -106,21 +111,22 @@ tbody tr:hover{background:#f8f9fb}
     <span class="info-badge" id="infoBadge">–</span>
   </div>
 
-  <div class="kpis" id="kpisSection" style="display:none">
-    <div class="kpi"><div class="label">Gesamtverbrauch</div><div class="value" id="kpiTotal">–</div></div>
-    <div class="kpi"><div class="label">EEG-Anteil</div><div class="value" id="kpiEEG">–</div></div>
-    <div class="kpi"><div class="label">Netzbezug</div><div class="value" id="kpiGrid">–</div></div>
-    <div class="kpi"><div class="label">EEG %</div><div class="value" id="kpiShare">–</div></div>
-    <div class="kpi"><div class="label">Ø pro Tag</div><div class="value" id="kpiAvg">–</div></div>
-  </div>
+  <div class="kpis" id="kpisSection" style="display:none"></div>
 
   <div class="chart-card" id="chartSection" style="display:none">
-    <div class="chart-legend">
-      <span><span class="dot" style="background:var(--eeg)"></span>EEG</span>
-      <span><span class="dot" style="background:var(--netz)"></span>Netzbezug</span>
-    </div>
+    <div class="chart-legend" id="chartLegend"></div>
     <div class="chart-wrap">
       <canvas id="chart"></canvas>
+    </div>
+  </div>
+
+  <div class="table-card" id="peakSection" style="display:none">
+    <div class="card-title" id="peakTitle"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr id="peakHead"></tr></thead>
+        <tbody id="peakBody"></tbody>
+      </table>
     </div>
   </div>
 
@@ -130,9 +136,9 @@ tbody tr:hover{background:#f8f9fb}
         <thead>
           <tr>
             <th>Zeit</th>
-            <th>Gesamt</th>
-            <th>EEG</th>
-            <th>Netzbezug</th>
+            <th>Gesamt<span class="unit"></span></th>
+            <th>EEG<span class="unit"></span></th>
+            <th>Netzbezug<span class="unit"></span></th>
             <th>Status EEG</th>
             <th>Qualität</th>
           </tr>
@@ -140,6 +146,7 @@ tbody tr:hover{background:#f8f9fb}
         <tbody id="tableBody"></tbody>
       </table>
     </div>
+    <div class="table-note" id="tableNote"></div>
   </div>
 
 </div>
@@ -147,7 +154,8 @@ tbody tr:hover{background:#f8f9fb}
 <script>
 let chartInstance = null;
 let allRows = [];
-let dataUnit = 'kWh';
+let isPower = false;   // true: kW values, false: kWh values
+let stepMinutes = 15;  // resolution of the loaded data: 15, 60 or 1440
 
 const snapPlugin = {
   id: 'snap',
@@ -225,9 +233,28 @@ function parseLinzDate(str) {
 }
 
 function detectFormat(headers) {
-  if (headers.includes('Leistung in kW')) return 'power15';
-  if (headers.includes('Datum von')) return 'energy15';
-  return 'energy60';
+  const has = h => headers.includes(h);
+  if (has('Datum von') && has('Leistung in kW')) {
+    return { isPower: true, date: 'Datum von', value: 'Leistung in kW', rest: 'Restnetzbezug in kW (Energiegemeinschaft)' };
+  }
+  if (has('Energiemenge in kWh') && (has('Datum von') || has('Datum'))) {
+    const date = has('Datum von') ? 'Datum von' : 'Datum';
+    return { isPower: false, date, value: 'Energiemenge in kWh', rest: 'Restnetzbezug in kWh (Energiegemeinschaft)' };
+  }
+  return null;
+}
+
+const isBlank = val => val === null || val === undefined || String(val).trim() === '';
+
+// Smallest distance between two rows, rounded up to 15 min, 1 h or 1 day
+function resolutionOf(sortedRows) {
+  let min = Infinity;
+  for (let i = 1; i < sortedRows.length; i++) {
+    const diff = (sortedRows[i].time - sortedRows[i - 1].time) / 60000;
+    if (diff > 0 && diff < min) min = diff;
+  }
+  if (min <= 15) return 15;
+  return min <= 60 ? 60 : 1440;
 }
 
 function parseCSVText(text) {
@@ -237,44 +264,33 @@ function parseCSVText(text) {
     dynamicTyping: false,
     delimiter: ';',
   });
-  if (!result.data || result.data.length === 0) return [];
-  const headers = result.meta.fields || [];
-  const fmt = detectFormat(headers);
+  const fmt = detectFormat(result.meta.fields || []);
+  if (!fmt) throw new Error('Unbekanntes CSV-Format');
+
   const rows = [];
+  const seen = new Set();
   for (const row of result.data) {
-    let time = null;
-    let total = 0;
-    let grid = 0;
-    let ersatzwert = '';
-    let statusEEG = '';
-    let isPower = false;
+    let time = parseLinzDate(row[fmt.date]);
+    if (!time || isBlank(row[fmt.value])) continue;
 
-    if (fmt === 'energy60') {
-      time = parseLinzDate(row['Datum']);
-      total = toNumber(row['Energiemenge in kWh']);
-      grid = parseGridUsage(row['Restnetzbezug in kWh (Energiegemeinschaft)'], total);
-      ersatzwert = (row['Ersatzwert'] || '').trim();
-      statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
-    } else if (fmt === 'energy15') {
-      time = parseLinzDate(row['Datum von']);
-      total = toNumber(row['Energiemenge in kWh']);
-      grid = parseGridUsage(row['Restnetzbezug in kWh (Energiegemeinschaft)'], total);
-      ersatzwert = (row['Ersatzwert'] || '').trim();
-      statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
-    } else {
-      time = parseLinzDate(row['Datum von']);
-      total = toNumber(row['Leistung in kW']);
-      grid = parseGridUsage(row['Restnetzbezug in kW (Energiegemeinschaft)'], total);
-      ersatzwert = (row['Ersatzwert'] || '').trim();
-      statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
-      isPower = true;
+    // The hour repeated at the end of daylight saving time: second occurrence is one hour later
+    if (seen.has(time.getTime())) {
+      const later = new Date(time.getTime() + 3600000);
+      if (later.getHours() === time.getHours()) time = later;
     }
+    seen.add(time.getTime());
 
-    if (!time) continue;
+    const total = toNumber(row[fmt.value]);
+    const grid = parseGridUsage(row[fmt.rest], total);
+    const hasGrid = !isBlank(row[fmt.rest]);
     const eeg = Math.max(total - grid, 0);
-    rows.push({ time, total, grid, eeg, ersatzwert, statusEEG, isPower });
+    const ersatzwert = (row['Ersatzwert'] || '').trim();
+    const statusEEG = (row['Status (Energiegemeinschaft)'] || '').trim();
+    rows.push({ time, total, grid, hasGrid, eeg, ersatzwert, substitute: ersatzwert !== '', statusEEG });
   }
-  return rows;
+  if (rows.length === 0) throw new Error('Keine Daten gefunden');
+  rows.sort((a, b) => a.time - b.time);
+  return { rows, isPower: fmt.isPower, stepMinutes: resolutionOf(rows) };
 }
 
 function resolveMode(rows, modeSelect) {
@@ -286,38 +302,43 @@ function resolveMode(rows, modeSelect) {
   return modeSelect;
 }
 
+// Energy is summed up. For power the maximum is kept, so that peaks stay visible.
 function aggregate(rows, mode) {
   if (mode === 'raw') return rows;
 
-  const isPower = rows.length > 0 && rows[0].isPower;
   const map = new Map();
 
   for (const r of rows) {
     const d = r.time;
-    let key;
-    if (mode === 'hour') {
-      key = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()).getTime();
-    } else {
-      key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    }
+    // subtracting the minutes keeps both 02:00 hours apart when daylight saving time ends
+    const key = mode === 'hour'
+      ? d.getTime() - d.getMinutes() * 60000
+      : new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     if (!map.has(key)) {
-      map.set(key, { time: new Date(key), total: 0, grid: 0, eeg: 0, count: 0, isPower, ersatzwert: '', statusEEG: '' });
+      map.set(key, { time: new Date(key), total: 0, grid: 0, eeg: 0, hasGrid: !isPower, substitute: false, ersatzwert: '', statusEEG: '' });
     }
     const entry = map.get(key);
-    entry.total += r.total;
-    entry.grid += r.grid;
-    entry.eeg += r.eeg;
-    entry.count += 1;
+    entry.substitute ||= r.substitute;
+    if (isPower) {
+      entry.total = Math.max(entry.total, r.total);
+      if (r.hasGrid) {
+        entry.grid = Math.max(entry.grid, r.grid);
+        entry.hasGrid = true;
+      }
+    } else {
+      entry.total += r.total;
+      entry.grid += r.grid;
+      entry.eeg += r.eeg;
+      entry.hasGrid &&= r.hasGrid;
+    }
   }
 
-  const result = [];
-  for (const entry of map.values()) {
-    if (isPower && entry.count > 0) {
-      entry.total /= entry.count;
-      entry.grid /= entry.count;
-      entry.eeg /= entry.count;
+  const result = [...map.values()];
+  if (isPower) {
+    for (const entry of result) {
+      entry.eeg = null; // maxima of different quarter hours cannot be split into shares
+      if (!entry.hasGrid) entry.grid = null;
     }
-    result.push(entry);
   }
   result.sort((a, b) => a.time - b.time);
   return result;
@@ -337,9 +358,8 @@ function filterRows(rows) {
 
 function setDateRange(rows) {
   if (rows.length === 0) return;
-  const times = rows.map(r => r.time);
-  const min = new Date(Math.min(...times));
-  const max = new Date(Math.max(...times));
+  const min = rows[0].time; // rows are sorted by time
+  const max = rows[rows.length - 1].time;
   const fmt = d => {
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -354,31 +374,82 @@ function fmtNum(n, decimals) {
   return n.toLocaleString('de-AT', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-function renderKPIs(rows, unit) {
-  const isPower = rows.length > 0 && rows[0].isPower;
-  let total, eeg, grid;
+function fmtDateTime(d) {
+  return d.toLocaleString('de-AT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
 
-  if (isPower) {
-    total = rows.length > 0 ? rows.reduce((s, r) => s + r.total, 0) / rows.length : 0;
-    eeg = rows.length > 0 ? rows.reduce((s, r) => s + r.eeg, 0) / rows.length : 0;
-    grid = rows.length > 0 ? rows.reduce((s, r) => s + r.grid, 0) / rows.length : 0;
-  } else {
-    total = rows.reduce((s, r) => s + r.total, 0);
-    eeg = rows.reduce((s, r) => s + r.eeg, 0);
-    grid = rows.reduce((s, r) => s + r.grid, 0);
-  }
+function fmtInterval(start, minutes) {
+  const end = new Date(start.getTime() + minutes * 60000);
+  return `${fmtDateTime(start)}–${end.toLocaleTimeString('de-AT', { hour:'2-digit', minute:'2-digit' })}`;
+}
 
+function maxBy(rows, key) {
+  return rows.reduce((best, r) => (!best || r[key] > best[key] ? r : best), null);
+}
+
+function powerKPIs(rows) {
+  const peakCard = (label, row, key) => row
+    ? [label, `${fmtNum(row[key], 3)} kW`, fmtDateTime(row.time)]
+    : [label, '–'];
+  const avg = rows.reduce((s, r) => s + r.total, 0) / rows.length;
+  const cards = [
+    peakCard('Höchste Leistung', maxBy(rows, 'total'), 'total'),
+    ['Ø Leistung', rows.length > 0 ? `${fmtNum(avg, 3)} kW` : '–'],
+  ];
+  const restRows = rows.filter(r => r.hasGrid);
+  if (restRows.length > 0) cards.push(peakCard('Höchste Restleistung', maxBy(restRows, 'grid'), 'grid'));
+  return cards;
+}
+
+function energyKPIs(rows) {
+  const total = rows.reduce((s, r) => s + r.total, 0);
+  const eeg = rows.reduce((s, r) => s + r.eeg, 0);
+  const grid = rows.reduce((s, r) => s + r.grid, 0);
   const share = total > 0 ? (eeg / total) * 100 : 0;
   const days = new Set(rows.map(r => r.time.toDateString())).size;
-  const avg = isPower
-    ? (rows.length > 0 ? rows.reduce((s, r) => s + r.total, 0) / rows.length : 0)
-    : (days > 0 ? total / days : 0);
+  const avg = days > 0 ? total / days : 0;
+  const kWh = n => `${fmtNum(n, 2)} kWh`;
+  return [
+    ['Gesamtverbrauch', kWh(total)],
+    ['EEG-Anteil', kWh(eeg)],
+    ['Netzbezug', kWh(grid)],
+    ['EEG %', `${fmtNum(share, 1)} %`],
+    ['Ø pro Tag', kWh(avg)],
+  ];
+}
 
-  document.getElementById('kpiTotal').textContent = fmtNum(total, 2) + ' ' + unit;
-  document.getElementById('kpiEEG').textContent = fmtNum(eeg, 2) + ' ' + unit;
-  document.getElementById('kpiGrid').textContent = fmtNum(grid, 2) + ' ' + unit;
-  document.getElementById('kpiShare').textContent = fmtNum(share, 1) + ' %';
-  document.getElementById('kpiAvg').textContent = fmtNum(avg, 2) + ' ' + unit;
+function renderKPIs(rows) {
+  const cards = isPower ? powerKPIs(rows) : energyKPIs(rows);
+  document.getElementById('kpisSection').innerHTML = cards.map(([label, value, sub]) =>
+    `<div class="kpi"><div class="label">${label}</div><div class="value">${value}</div>` +
+    (sub ? `<div class="sub">${sub}</div>` : '') +
+    `</div>`
+  ).join('');
+}
+
+function energyDatasets(rows) {
+  const area = (label, data, color, order) => ({
+    label, data, order,
+    backgroundColor: color + 'cc', borderColor: color, borderWidth: 1.5,
+    fill: true, tension: 0.15, pointRadius: 0,
+  });
+  return [
+    area('EEG', rows.map(r => r.eeg), '#5da831', 2),
+    area('Netzbezug', rows.map(r => r.grid), '#1eaabd', 1),
+  ];
+}
+
+function powerDatasets(rows) {
+  const steps = (label, data, color, order) => ({
+    label, data, order,
+    backgroundColor: color, borderColor: color, borderWidth: 1.5,
+    fill: false, stepped: 'before', pointRadius: rows.length === 1 ? 3 : 0,
+  });
+  const datasets = [steps('Gesamt', rows.map(r => r.total), '#d97706', 2)];
+  if (rows.some(r => r.hasGrid)) {
+    datasets.push(steps('Netzbezug', rows.map(r => r.hasGrid ? r.grid : null), '#1eaabd', 1));
+  }
+  return datasets;
 }
 
 function renderChart(rows, mode) {
@@ -387,40 +458,19 @@ function renderChart(rows, mode) {
     chartInstance = null;
   }
 
-  const labels = rows.map(r => r.time);
-  const eegData = rows.map(r => r.eeg);
-  const gridData = rows.map(r => r.grid);
-  const showSnap = mode !== 'day';
+  const datasets = isPower ? powerDatasets(rows) : energyDatasets(rows);
+  document.getElementById('chartLegend').innerHTML = datasets.map(d =>
+    `<span><span class="dot" style="background:${d.borderColor}"></span>${d.label}</span>`
+  ).join('');
+
+  const showSnap = !isPower && mode !== 'day';
+  const tooltip = isPower
+    ? { callbacks: { label: c => `${c.dataset.label}: ${fmtNum(c.parsed.y, 3)} kW` } }
+    : {};
 
   chartInstance = new Chart(document.getElementById('chart'), {
     type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'EEG',
-          data: eegData,
-          backgroundColor: '#5da831cc',
-          borderColor: '#5da831',
-          borderWidth: 1.5,
-          fill: true,
-          tension: 0.15,
-          pointRadius: 0,
-          order: 2,
-        },
-        {
-          label: 'Netzbezug',
-          data: gridData,
-          backgroundColor: '#1eaabdcc',
-          borderColor: '#1eaabd',
-          borderWidth: 1.5,
-          fill: true,
-          tension: 0.15,
-          pointRadius: 0,
-          order: 1,
-        },
-      ],
-    },
+    data: { labels: rows.map(r => r.time), datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -428,6 +478,7 @@ function renderChart(rows, mode) {
       plugins: {
         legend: { display: false },
         snap: { show: showSnap },
+        tooltip,
       },
       scales: {
         x: {
@@ -437,8 +488,9 @@ function renderChart(rows, mode) {
           grid: { color: '#f0f2f5' },
         },
         y: {
-          stacked: true,
+          stacked: !isPower,
           beginAtZero: true,
+          title: { display: isPower, text: 'kW' },
           ticks: { color: '#6b7280', font: { size: 11 } },
           grid: { color: '#f0f2f5' },
         },
@@ -449,10 +501,67 @@ function renderChart(rows, mode) {
 
 function badgeHtml(code) {
   const cls = ['M','EB','NV','EN'].includes(code) ? `badge-${code}` : 'badge-other';
-  return `<span class="badge ${cls}">${code || '–'}</span>`;
+  const text = code.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+  return `<span class="badge ${cls}">${text || '–'}</span>`;
+}
+
+// Power files: highest quarter hour per month. Energy files: highest clock hour per month.
+function monthlyPeaks(rows) {
+  const months = new Map();
+  const monthOf = d => {
+    const key = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+    if (!months.has(key)) months.set(key, { start: new Date(key), count: 0, buckets: [] });
+    return months.get(key);
+  };
+  for (const r of rows) monthOf(r.time).count++;
+  for (const b of isPower ? rows : aggregate(rows, 'hour')) monthOf(b.time).buckets.push(b);
+
+  return [...months.values()].map(({ start, count, buckets }) => {
+    const nextMonth = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    const expected = (nextMonth - start) / (stepMinutes * 60000); // accounts for clock changes
+    return {
+      start,
+      coverage: count / expected,
+      peak: maxBy(buckets, 'total'),
+      restPeak: maxBy(buckets.filter(b => b.hasGrid), 'grid'),
+    };
+  });
+}
+
+function renderPeaks(rows) {
+  const available = isPower ? stepMinutes === 15 : stepMinutes <= 60;
+  document.getElementById('peakSection').style.display = available ? '' : 'none';
+  if (!available) return;
+
+  const unit = isPower ? 'kW' : 'kWh';
+  const minutes = isPower ? 15 : 60;
+  const hasRest = rows.some(r => r.hasGrid);
+  const headers = ['Monat', 'Spitze', ...(hasRest ? ['Restnetz-Spitze'] : []), 'Daten'];
+  const cell = (row, key) => row
+    ? `<td><strong>${fmtNum(row[key], 3)} ${unit}</strong><br>${fmtInterval(row.time, minutes)}</td>`
+    : '<td>–</td>';
+
+  document.getElementById('peakTitle').textContent = isPower
+    ? 'Monatsspitzen · höchste Viertelstunde'
+    : 'Monatsspitzen · höchste volle Stunde';
+  document.getElementById('peakHead').innerHTML = headers.map(h => `<th>${h}</th>`).join('');
+
+  const body = monthlyPeaks(rows).map(({ start, coverage, peak, restPeak }) => {
+    const notes = [coverage >= 1 ? 'vollständig' : `unvollständig (${Math.floor(coverage * 100)} %)`];
+    if (peak.substitute) notes.push('Spitze mit Ersatzwert');
+    if (restPeak && restPeak.substitute) notes.push('Restnetz-Spitze mit Ersatzwert');
+    const month = start.toLocaleDateString('de-AT', { month: 'long', year: 'numeric' });
+    return `<tr><td>${month}</td>${cell(peak, 'total')}${hasRest ? cell(restPeak, 'grid') : ''}<td>${notes.join('<br>')}</td></tr>`;
+  }).join('');
+  document.getElementById('peakBody').innerHTML =
+    body || `<tr><td colspan="${headers.length}" class="no-data">Keine Daten</td></tr>`;
 }
 
 function renderTable(rows) {
+  document.querySelectorAll('.unit').forEach(el => el.textContent = isPower ? ' (kW)' : '');
+  document.getElementById('tableNote').textContent =
+    isPower && rows.length > 1000 ? `Erste 1000 von ${rows.length} Zeilen` : '';
+  const val = n => n === null ? '–' : fmtNum(n, 3);
   const tbody = document.getElementById('tableBody');
   const visible = rows.slice(0, 1000);
   if (visible.length === 0) {
@@ -461,19 +570,26 @@ function renderTable(rows) {
   }
   const parts = [];
   for (const r of visible) {
-    const timeStr = r.time.toLocaleString('de-AT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    const timeStr = fmtDateTime(r.time);
     parts.push(
       `<tr>` +
       `<td>${timeStr}</td>` +
-      `<td>${fmtNum(r.total, 3)}</td>` +
-      `<td class="eeg-val">${fmtNum(r.eeg, 3)}</td>` +
-      `<td class="netz-val">${fmtNum(r.grid, 3)}</td>` +
+      `<td>${val(r.total)}</td>` +
+      `<td class="eeg-val">${val(r.eeg)}</td>` +
+      `<td class="netz-val">${val(r.grid)}</td>` +
       `<td>${badgeHtml(r.statusEEG)}</td>` +
       `<td>${badgeHtml(r.ersatzwert)}</td>` +
       `</tr>`
     );
   }
   tbody.innerHTML = parts.join('');
+}
+
+function showResults(visible) {
+  document.getElementById('toolbar').classList.toggle('hidden', !visible);
+  for (const id of ['kpisSection', 'chartSection', 'peakSection', 'tableSection']) {
+    document.getElementById(id).style.display = visible ? '' : 'none';
+  }
 }
 
 function renderAll() {
@@ -483,18 +599,15 @@ function renderAll() {
   const modeSelectVal = document.getElementById('modeSelect').value;
   const resolvedMode = resolveMode(filtered, modeSelectVal);
   const aggregated = aggregate(filtered, resolvedMode);
-  const isPower = allRows.length > 0 && allRows[0].isPower;
-  const unit = isPower ? 'kW' : 'kWh';
 
-  document.getElementById('toolbar').classList.remove('hidden');
-  document.getElementById('kpisSection').style.display = '';
-  document.getElementById('chartSection').style.display = '';
-  document.getElementById('tableSection').style.display = '';
+  showResults(true);
 
-  document.getElementById('infoBadge').textContent = `${aggregated.length} Punkte · ${resolvedMode}`;
+  const maxHint = isPower && resolvedMode !== 'raw' ? ' · Maximum' : '';
+  document.getElementById('infoBadge').textContent = `${aggregated.length} Punkte · ${resolvedMode}${maxHint}`;
 
-  renderKPIs(aggregated, unit);
+  renderKPIs(filtered);
   renderChart(aggregated, resolvedMode);
+  renderPeaks(filtered);
   renderTable(aggregated);
 }
 
@@ -510,13 +623,26 @@ async function readFileAsText(file) {
 async function loadFiles(files) {
   const info = document.getElementById('fileInfo');
   try {
-    allRows = [];
+    let rows = [];
+    let first = null;
+    const loaded = new Set(); // timestamps of previous files, so overlaps are not counted twice
     for (const file of files) {
-      const text = await readFileAsText(file);
-      const rows = parseCSVText(text);
-      allRows.push(...rows);
+      let data;
+      try {
+        data = parseCSVText(await readFileAsText(file));
+      } catch (err) {
+        throw new Error(`${file.name}: ${err.message}`);
+      }
+      first ||= data;
+      if (data.isPower !== first.isPower || data.stepMinutes !== first.stepMinutes) {
+        throw new Error('Bitte nur Dateien gleicher Art (Leistung oder Energie) und Auflösung gemeinsam laden');
+      }
+      rows = rows.concat(data.rows.filter(r => !loaded.has(r.time.getTime())));
+      for (const r of data.rows) loaded.add(r.time.getTime());
     }
-    allRows.sort((a,b) => a.time - b.time);
+    allRows = rows.sort((a,b) => a.time - b.time);
+    isPower = first.isPower;
+    stepMinutes = first.stepMinutes;
 
     const n = files.length;
     info.textContent = `${n} Datei${n !== 1 ? 'en' : ''} geladen · ${allRows.length} Zeilen`;
@@ -525,6 +651,8 @@ async function loadFiles(files) {
     setDateRange(allRows);
     renderAll();
   } catch (err) {
+    allRows = [];
+    showResults(false);
     info.textContent = `Fehler: ${err.message}`;
     info.style.color = 'red';
   }
@@ -532,6 +660,7 @@ async function loadFiles(files) {
 
 document.getElementById('fileInput').addEventListener('change', e => {
   if (e.target.files.length > 0) loadFiles([...e.target.files]);
+  e.target.value = ''; // allows selecting the same file again
 });
 
 const dropZone = document.getElementById('dropZone');
@@ -540,7 +669,7 @@ dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('over');
-  const files = [...e.dataTransfer.files].filter(f => f.name.endsWith('.csv'));
+  const files = [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.csv'));
   if (files.length > 0) loadFiles(files);
 });
 
